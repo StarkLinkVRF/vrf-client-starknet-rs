@@ -23,15 +23,24 @@
 //!
 //! * Compute VRF proof
 //! * Verify VRF proof
-use std::fmt;
+use std::io::{Read, Write};
+use std::{fmt, mem};
+extern crate hex_slice;
+use hex_slice::AsHex;
+use std::str;
 use std::{
     fmt::{Debug, Formatter},
     os::raw::c_ulong,
 };
 
+use crate::VRF;
 use failure::Fail;
 use hmac_sha256::HMAC;
+use keccak_hash;
 
+use std::collections::VecDeque;
+
+use openssl::aes::unwrap_key;
 use openssl::{
     bn::{BigNum, BigNumContext},
     ec::{EcGroup, EcPoint, PointConversionForm},
@@ -39,8 +48,6 @@ use openssl::{
     hash::{hash, MessageDigest},
     nid::Nid,
 };
-
-use crate::VRF;
 
 use self::utils::{append_leading_zeros, bits2int, bits2octets};
 
@@ -208,6 +215,18 @@ impl ECVRF {
     pub fn derive_public_key(&mut self, secret_key: &[u8]) -> Result<Vec<u8>, Error> {
         let secret_key_bn = BigNum::from_slice(secret_key)?;
         let point = self.derive_public_key_point(&secret_key_bn)?;
+
+        let mut xbn2 = BigNum::new().unwrap();
+        let mut ybn2 = BigNum::new().unwrap();
+        let mut ctx = BigNumContext::new().unwrap();
+
+        point
+            .affine_coordinates(&self.group, &mut xbn2, &mut ybn2, &mut ctx)
+            .unwrap();
+        println!("public key");
+        println!("x: {}", xbn2);
+        println!("y: {}", ybn2);
+
         let bytes = point.to_bytes(
             &self.group,
             PointConversionForm::COMPRESSED,
@@ -291,23 +310,46 @@ impl ECVRF {
         alpha: &[u8],
     ) -> Result<EcPoint, Error> {
         let mut c = 0..255;
-        let pk_bytes = public_key.to_bytes(
+        let mut pk_bytes = public_key.to_bytes(
             &self.group,
             PointConversionForm::COMPRESSED,
             &mut self.bn_ctx,
         )?;
         let cipher = [self.cipher_suite.suite_string(), 0x01];
-        let mut v = [&cipher[..], &pk_bytes[..], alpha, &[0x00]].concat();
+
+        println!("len {}", pk_bytes.len());
+        let mut padded_bytes: [u8; 34] = [0; 34];
+
+        padded_bytes[0] = pk_bytes[0];
+
+        let mut i = 33;
+        while i > 1 {
+            padded_bytes[i] = pk_bytes[i - 1];
+            i = i - 1;
+        }
+
+        let mut v = [&cipher[..], &padded_bytes[..], alpha, &[0x00]].concat();
+        println!("pk {:x}", pk_bytes.as_hex());
+        println!("padded_bytes {:x}", padded_bytes.as_hex());
         let position = v.len() - 1;
         // `Hash(cipher||PK||data)`
         let mut point = c.find_map(|ctr| {
             v[position] = ctr;
-            let attempted_hash = hash(self.hasher, &v);
+
+            println!("v {:x}", v.as_hex());
+
+            //let attempted_hash = hash(self.hasher, &v);
+            let data: &mut [u8] = v.by_ref();
+            let res = keccak_hash::keccak(data);
             // Check validity of `H`
-            match attempted_hash {
-                Ok(attempted_hash) => self.arbitrary_string_to_point(&attempted_hash).ok(),
-                _ => None,
-            }
+            //println!(" attempted string {:x} ", data.as_hex());
+            //self.arbitrary_string_to_point(&data).ok()
+
+            let attempted_hash = keccak_hash::keccak(&v);
+            // Check validity of `H`
+            println!(" attempted string {} ", attempted_hash.to_string());
+            self.arbitrary_string_to_point(&attempted_hash.as_bytes())
+                .ok()
         });
 
         if let Some(pt) = point.as_mut() {
@@ -368,9 +410,13 @@ impl ECVRF {
         );
         let to_be_hashed = point_bytes?;
         // H(point_bytes)
-        let mut hash = hash(self.hasher, &to_be_hashed).map(|hash| hash.to_vec())?;
-        hash.truncate(self.n / 8);
-        let result = BigNum::from_slice(hash.as_slice())?;
+        let attempted_hash = keccak_hash::keccak(&to_be_hashed);
+
+        let mut res = attempted_hash.as_bytes().to_vec();
+        let mut hash = attempted_hash.as_bytes().to_vec();
+        //let mut hash = hash(self.hasher, &to_be_hashed).map(|hash| hash.to_vec())?;
+        res.truncate(self.n / 8);
+        let result = BigNum::from_slice(res.as_slice())?;
 
         Ok(result)
     }
@@ -545,8 +591,27 @@ impl VRF<&[u8], &[u8]> for ECVRF {
         // Step 1: decode proof
         let (gamma_point, c, s) = self.decode_proof(pi)?;
 
+        let mut xbn2 = BigNum::new().unwrap();
+        let mut ybn2 = BigNum::new().unwrap();
+
+        gamma_point
+            .affine_coordinates(&self.group, &mut xbn2, &mut ybn2, &mut self.bn_ctx)
+            .unwrap();
+        println!("gamma");
+        println!("x: {}", xbn2);
+        println!("y: {}", ybn2);
+        println!("c: {}", c);
+        println!("s: {}", s);
+
         // Step 2: hash to curve
         let public_key_point = EcPoint::from_bytes(&self.group, y, &mut self.bn_ctx)?;
+        public_key_point
+            .affine_coordinates(&self.group, &mut xbn2, &mut ybn2, &mut self.bn_ctx)
+            .unwrap();
+        println!("public_key_point");
+        println!("x: {}", xbn2);
+        println!("y: {}", ybn2);
+
         let h_point = self.hash_to_try_and_increment(&public_key_point, alpha)?;
 
         // Step 3: U = sB -cY
@@ -567,9 +632,39 @@ impl VRF<&[u8], &[u8]> for ECVRF {
         c_gamma.invert(&self.group, &self.bn_ctx)?;
         v_point.add(&self.group, &s_h, &c_gamma, &mut self.bn_ctx)?;
 
+        let mut x = BigNum::new().unwrap();
+        let mut y = BigNum::new().unwrap();
+        h_point
+            .affine_coordinates(&self.group, &mut x, &mut y, &mut self.bn_ctx)
+            .unwrap();
+        println!("h_point");
+        println!("x: {}", x);
+        println!("y: {}", y);
+
+        gamma_point
+            .affine_coordinates(&self.group, &mut x, &mut y, &mut self.bn_ctx)
+            .unwrap();
+        println!("gamma_point");
+        println!("x: {}", x);
+        println!("y: {}", y);
+
+        u_point
+            .affine_coordinates(&self.group, &mut x, &mut y, &mut self.bn_ctx)
+            .unwrap();
+        println!("u_point");
+        println!("x: {}", x);
+        println!("y: {}", y);
+
+        v_point
+            .affine_coordinates(&self.group, &mut x, &mut y, &mut self.bn_ctx)
+            .unwrap();
+        println!("v_point");
+        println!("x: {}", x);
+        println!("y: {}", y);
+
         // Step 5: hash points(...)
         let derived_c = self.hash_points(&[&h_point, &gamma_point, &u_point, &v_point])?;
-
+        println!("derived_c: {}", derived_c);
         // Step 6: Check validity
         if !derived_c.eq(&c) {
             return Err(Error::InvalidProof);

@@ -16,11 +16,18 @@ fn main() {
     let secret_key =
         hex::decode("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721").unwrap();
     let public_key = vrf.derive_public_key(&secret_key).unwrap();
-    let message: &[u8] = b"sample";
+
+    println!("Generated VRF public key: {}", hex::encode(&public_key));
+
+    let alpha_hash = "aa4ba4b304228a9d05087e147c9e86d84c708bbbe62bb35b28dab74492f6c726";
+    let message_vec = hex::decode(alpha_hash).expect("Decoding failed");
+
+    let message: &[u8] = message_vec.as_ref();
 
     // VRF proof and hash output
     let pi = vrf.prove(&secret_key, &message).unwrap();
     let hash = vrf.proof_to_hash(&pi).unwrap();
+
     println!("Generated VRF proof: {}", hex::encode(&pi));
 
     // VRF proof verification (returns VRF hash output)
