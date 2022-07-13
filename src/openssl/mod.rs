@@ -108,13 +108,13 @@ impl From<ErrorStack> for Error {
 /// An Elliptic Curve VRF
 pub struct ECVRF {
     // Bignumber arithmetic context
-    bn_ctx: BigNumContext,
+    pub bn_ctx: BigNumContext,
     // Ciphersuite identification
     cipher_suite: CipherSuite,
     // Cofactor of the curve
     cofactor: u8,
     // Elliptic curve group
-    group: EcGroup,
+    pub group: EcGroup,
     // Hasher structure
     hasher: MessageDigest,
     // The order of the curve
@@ -431,7 +431,7 @@ impl ECVRF {
     /// # Returns
     ///
     /// * A tuple containing the gamma `EcPoint`, and `BigNum` parameters `c` and `s`.
-    fn decode_proof(&mut self, pi: &[u8]) -> Result<(EcPoint, BigNum, BigNum), Error> {
+    pub fn decode_proof(&mut self, pi: &[u8]) -> Result<(EcPoint, BigNum, BigNum), Error> {
         let gamma_oct = if self.qlen % 8 > 0 {
             self.qlen / 8 + 2
         } else {

@@ -6,7 +6,6 @@
 //! 2. Generate a VRF proof by using the `prove()` function
 //! 3. (Optional) Convert the VRF proof to a hash (e.g. to be used as pseudo-random value)
 //! 4. Verify a VRF proof by using `verify()` function
-
 use vrf::openssl::{CipherSuite, ECVRF};
 use vrf::VRF;
 
@@ -19,7 +18,7 @@ fn main() {
 
     println!("Generated VRF public key: {}", hex::encode(&public_key));
 
-    let alpha_hash = "aa4ba4b304228a9d05087e147c9e86d84c708bbbe62bb35b28dab74492f6c726";
+    let alpha_hash = "f60cfab7e2cb9f2d73b0c2fa4a4bf40c326a7e71fdcdee263b071276522d0eb1";
     let message_vec = hex::decode(alpha_hash).expect("Decoding failed");
 
     let message: &[u8] = message_vec.as_ref();
@@ -32,7 +31,7 @@ fn main() {
 
     // VRF proof verification (returns VRF hash output)
     let beta = vrf.verify(&public_key, &pi, &message);
-
+    vrf.decode_proof(&pi);
     match beta {
         Ok(beta) => {
             println!("VRF proof is valid!\nHash output: {}", hex::encode(&beta));
