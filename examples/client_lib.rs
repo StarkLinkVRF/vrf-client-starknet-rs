@@ -4,16 +4,17 @@ use starknet::{
         chain_id, types::BlockId, types::ConfirmedTransactionReceipt, types::FieldElement,
         types::InvokeFunctionTransactionRequest, utils::get_selector_from_name,
     },
+    macros::selector,
     providers::{Provider, SequencerGatewayProvider},
     signers::{LocalWallet, SigningKey},
 };
-use std::fs;
+use std::{fs, ops::Add};
 use url::Url;
 use vrf::openssl::{CipherSuite, ECVRF};
 use vrf::VRF;
 
 use openssl::bn::{BigNum, BigNumContext};
-async fn make_rng_request(
+pub async fn make_rng_request(
     account: SingleOwnerAccount<SequencerGatewayProvider, LocalWallet>,
     dice_address: FieldElement,
 ) {
@@ -24,9 +25,10 @@ async fn make_rng_request(
             calldata: vec![],
         }])
         .send()
-        .await;
+        .await
+        .expect("error requesting index");
 
-    println!("result is {:?}", result)
+    println!("request_rng  {:?}", result)
 }
 
 pub fn starknet_nile_localhost() -> SequencerGatewayProvider {
@@ -35,14 +37,27 @@ pub fn starknet_nile_localhost() -> SequencerGatewayProvider {
         Url::parse("http://127.0.0.1:5050/feeder_gateway").unwrap(),
     )
 }
-async fn get_latest_block(provider: SequencerGatewayProvider) -> starknet::core::types::Block {
+pub async fn get_latest_block(provider: SequencerGatewayProvider) -> starknet::core::types::Block {
     let latest_block = provider.get_block(BlockId::Latest).await;
-    println!("{:#?}", latest_block);
+
     return latest_block.unwrap();
 }
 
-async fn get_rng_request_events(provider: SequencerGatewayProvider, oracle_address: FieldElement) {
-    let block = get_latest_block(provider).await;
+async fn get_block(
+    provider: SequencerGatewayProvider,
+    block_number: u64,
+) -> starknet::core::types::Block {
+    let latest_block = provider.get_block(BlockId::Number(block_number)).await;
+
+    return latest_block.unwrap();
+}
+
+pub async fn get_rng_request_events(
+    provider: SequencerGatewayProvider,
+    oracle_address: FieldElement,
+    block_number: u64,
+) -> Vec<FieldElement> {
+    let block = get_block(provider, block_number).await;
 
     let mut request_indexes: Vec<FieldElement> = Vec::new();
     for tx in block.transaction_receipts {
@@ -51,6 +66,8 @@ async fn get_rng_request_events(provider: SequencerGatewayProvider, oracle_addre
             request_indexes.append(&mut fresh_indexes)
         }
     }
+
+    return request_indexes;
 }
 
 async fn get_request_events_from_transaction(
@@ -72,6 +89,26 @@ async fn get_request_events_from_transaction(
     return request_indexes;
 }
 
+pub async fn get_roll_result(dice_address: FieldElement, index: FieldElement) {
+    let provider = starknet_nile_localhost();
+
+    let call_result = provider
+        .call_contract(
+            InvokeFunctionTransactionRequest {
+                contract_address: dice_address,
+                entry_point_selector: selector!("get_roll_result"),
+                calldata: vec![index],
+                signature: vec![],
+                max_fee: FieldElement::ZERO,
+            },
+            BlockId::Latest,
+        )
+        .await
+        .expect("failed to call contract");
+
+    println!("get_roll_result {:?} ", call_result.result);
+}
+
 async fn resolve_rng_request(
     account: SingleOwnerAccount<SequencerGatewayProvider, LocalWallet>,
     request_index: FieldElement,
@@ -79,21 +116,37 @@ async fn resolve_rng_request(
     secret_key: Vec<u8>,
     mut vrf: ECVRF,
 ) {
-    let invoke_fn_tx = InvokeFunctionTransactionRequest {
-        contract_address: oracle_address,
-        entry_point_selector: get_selector_from_name("get_request").unwrap(),
-        calldata: vec![request_index],
-        signature: [FieldElement::from_hex_be("01").unwrap()].to_vec(),
-        max_fee: FieldElement::from_hex_be("01").unwrap(),
-    };
+    let provider = starknet_nile_localhost();
 
-    let result = account
-        .provider()
-        .call_contract(invoke_fn_tx, BlockId::Latest)
-        .await;
+    let call_result = provider
+        .call_contract(
+            InvokeFunctionTransactionRequest {
+                contract_address: oracle_address,
+                entry_point_selector: selector!("get_request"),
+                calldata: vec![request_index],
+                signature: vec![],
+                max_fee: FieldElement::ZERO,
+            },
+            BlockId::Latest,
+        )
+        .await
+        .expect("failed to call contract");
 
-    let alpha_hash = "f60cfab7e2cb9f2d73b0c2fa4a4bf40c326a7e71fdcdee263b071276522d0eb1";
-    let message_vec = hex::decode(alpha_hash).expect("Decoding failed");
+    println!("get_request res {:?} ", call_result.result);
+
+    let alpha_low = call_result.result[1].to_bytes_be();
+    let alpha_high = call_result.result[2].to_bytes_be();
+
+    let mut message_vec = alpha_high
+        .get(16..32)
+        .expect("error getting low bits")
+        .to_vec();
+    let mut message_vec_low = alpha_low
+        .get(16..32)
+        .expect("error getting low bits")
+        .to_vec();
+
+    message_vec.append(&mut message_vec_low);
 
     let message: &[u8] = message_vec.as_ref();
 
@@ -139,53 +192,59 @@ async fn resolve_rng_request(
             ],
         }])
         .send()
-        .await;
+        .await
+        .expect("resolve_rng_request failed");
 
     return ();
 }
 
 fn split(x: BigNum, mut bn_ctx: BigNumContext) -> (BigNum, BigNum, BigNum) {
-    let mut d0 = BigNum::new().unwrap();
-    let mut d1 = BigNum::new().unwrap();
-    let mut d2 = BigNum::new().unwrap();
     let mut bits_86 = BigNum::from_dec_str("77371252455336267181195264").unwrap();
 
     let mut rem = BigNum::new().unwrap();
-
+    let mut d0 = BigNum::new().unwrap();
     d0 = x;
-    d0.mask_bits(86);
 
-    x.div_rem(&mut rem, &x, &bits_86, &mut bn_ctx).unwrap();
+    let mut d1 = BigNum::new().unwrap();
+    d1.rshift(&d0, 86).unwrap();
 
-    d1 = x;
-    d1.mask_bits(86);
+    let mut d2 = BigNum::new().unwrap();
+    d2.rshift(&d1, 86).unwrap();
 
-    x.div_rem(&mut rem, &x, &bits_86, &mut bn_ctx).unwrap();
+    d0.mask_bits(86).expect("error masking d0");
 
-    d2 = x;
-    d2.mask_bits(86);
+    if !d1.le(&bits_86) {
+        d1.mask_bits(86).expect("error masking d1");
+    }
+
+    if !d2.le(&bits_86) {
+        d2.mask_bits(86).expect("error masking d2");
+    }
 
     return (d0, d1, d2);
 }
 
+fn pack(x1: BigNum, x2: BigNum, x3: BigNum) -> BigNum {
+    let mut shifted_x2 = BigNum::new().unwrap();
+    shifted_x2.lshift(&x2, 86).unwrap();
+
+    let mut shifted_x3 = BigNum::new().unwrap();
+    shifted_x3.lshift(&x3, 172).unwrap();
+
+    let res = x1.add(&shifted_x2).add(&shifted_x3);
+
+    return res;
+}
 pub async fn resolve_rng_requests(
-    provider: SequencerGatewayProvider,
     account: SingleOwnerAccount<SequencerGatewayProvider, LocalWallet>,
     request_indexes: Vec<FieldElement>,
     oracle_address: FieldElement,
     secret_key: Vec<u8>,
 ) {
-    let mut vrf = ECVRF::from_suite(CipherSuite::SECP256K1_SHA256_TAI).unwrap();
-    // Inputs: Secret Key, Public Key (derived) & Message
-    let secret_key =
-        hex::decode("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721").unwrap();
-    let public_key = vrf.derive_public_key(&secret_key).unwrap();
-
     for request_index in request_indexes {
-        let account_copy = account.clone();
         let sk = secret_key.clone();
-        let mut vrf = ECVRF::from_suite(CipherSuite::SECP256K1_SHA256_TAI).unwrap();
-        resolve_rng_request(account_copy, request_index, oracle_address, sk, vrf);
+        let vrf = ECVRF::from_suite(CipherSuite::SECP256K1_SHA256_TAI).unwrap();
+        resolve_rng_request(account.clone(), request_index, oracle_address, sk, vrf).await;
     }
 }
 
@@ -197,16 +256,15 @@ fn main() {
     let signer = LocalWallet::from(SigningKey::from_secret_scalar(
         FieldElement::from_hex_be(&private_key).unwrap(),
     ));
-    let account_contract_address = FieldElement::from_hex_be(
-        "4077a895eda64b37f4ff7bf9beb16b487c9f9535662fcde096b747fa75643dc",
-    )
-    .unwrap();
+    let account_contract_address =
+        FieldElement::from_hex_be("a2b80a672ba14339997ccf71274f57463a902cd740f9d0f02786bc3b440864")
+            .unwrap();
     let oracle_address = FieldElement::from_hex_be(
-        "04102e75c500fe57a7ae4825c56500a0395fccab45ad7b5ebdd1ab1545ac7f0b",
+        "04b8dad9fcdc1b57f65d0464165b387cc520ccdd55440ed1ff1359625ee45a85",
     )
     .unwrap();
     let dice_address = FieldElement::from_hex_be(
-        "0426a2c5e5f830bb543c120022e5849fbf33fbc26a08f3b8490f895c6328956e",
+        "033593c0bab9d9a7c95a48013ffe56dbe43312dd9ab133c6cc4803a0780894e2",
     )
     .unwrap();
 
@@ -225,12 +283,31 @@ fn main() {
     let mut vrf = ECVRF::from_suite(CipherSuite::SECP256K1_SHA256_TAI).unwrap();
     let secret_key =
         hex::decode("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721").unwrap();
-    rt.block_on(resolve_rng_request(
-        account_two,
-        one,
-        oracle_address,
-        secret_key,
-        vrf,
-    ));
+    //rt.block_on(resolve_rng_request(account_two,one,oracle_address,secret_key,vrf,));
     // rt.block_on(get_latest_block(provider));
+    //rt.block_on(get_roll_result(dice_address));
+}
+
+//TESTS
+
+#[cfg(test)]
+mod test_client_lib {
+    use openssl::bn::{BigNum, BigNumContext};
+
+    use crate::client_lib;
+
+    #[test]
+    fn test_split() {
+        let mut x = BigNum::from_dec_str(
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        )
+        .expect("error parsing bignumer");
+        let mut bn_ctx = BigNumContext::new().unwrap();
+        let (x1, x2, x3) = client_lib::split(x, bn_ctx);
+        println!("x1, x2, x3 {} {} {}", x1, x2, x3);
+
+        let packed = client_lib::pack(x1, x2, x3);
+
+        println!("packed {}", packed);
+    }
 }
