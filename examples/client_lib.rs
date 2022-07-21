@@ -116,7 +116,7 @@ async fn resolve_rng_request(
     secret_key: Vec<u8>,
     mut vrf: ECVRF,
 ) {
-    let provider = starknet_nile_localhost();
+    let provider = account.provider().clone();
 
     let call_result = provider
         .call_contract(
@@ -171,7 +171,7 @@ async fn resolve_rng_request(
     let bn_ctx = BigNumContext::new().unwrap();
     let (s1, s2, s3) = split(s, bn_ctx);
 
-    let result = account
+    account
         .execute(&[Call {
             to: oracle_address,
             selector: get_selector_from_name("resolve_rng_request").unwrap(),
@@ -250,7 +250,7 @@ pub async fn resolve_rng_requests(
 
 fn main() {
     let private_key =
-        fs::read_to_string("secrets.txt").expect("Something went wrong reading the file");
+        fs::read_to_string("wallet-secret.txt").expect("Something went wrong reading the file");
     // Query contract event
     let provider = starknet_nile_localhost();
     let signer = LocalWallet::from(SigningKey::from_secret_scalar(

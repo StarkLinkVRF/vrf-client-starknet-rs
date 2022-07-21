@@ -29,7 +29,7 @@ async fn make_requests() {
     let provider = client_lib::starknet_nile_localhost();
 
     let private_key =
-        fs::read_to_string("secrets.txt").expect("Something went wrong reading the file");
+        fs::read_to_string("wallet-secret.txt").expect("Something went wrong reading the file");
 
     let signer = LocalWallet::from(SigningKey::from_secret_scalar(
         FieldElement::from_hex_be(&private_key).unwrap(),
