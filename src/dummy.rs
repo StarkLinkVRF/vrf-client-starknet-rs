@@ -1,6 +1,7 @@
 //! Sample module implementing a __dummy__ (to be used as example) Verifiable Random Function (VRF)
 use crate::VRF;
 use failure::Error;
+use starknet::core::types::FieldElement;
 
 pub struct DummyVRF;
 
@@ -20,12 +21,17 @@ impl<'a> VRF<PublicKey<'a>, SecretKey<'a>> for DummyVRF {
     type Error = Error;
 
     // Generate proof from key pair and message
-    fn prove(&mut self, _x: SecretKey, _alpha: &[u8]) -> Result<Vec<u8>, Self::Error> {
+    fn prove(&mut self, _x: SecretKey, _alpha: [FieldElement; 2]) -> Result<Vec<u8>, Self::Error> {
         Ok(vec![])
     }
 
     // Verify proof given public key, proof and message
-    fn verify(&mut self, _y: PublicKey, _pi: &[u8], _alpha: &[u8]) -> Result<Vec<u8>, Self::Error> {
+    fn verify(
+        &mut self,
+        _y: PublicKey,
+        _pi: &[u8],
+        _alpha: [FieldElement; 2],
+    ) -> Result<Vec<u8>, Self::Error> {
         Ok(vec![])
     }
 }

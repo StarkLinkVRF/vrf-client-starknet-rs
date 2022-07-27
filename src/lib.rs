@@ -16,6 +16,8 @@
 //! * `P256_SHA256_TAI`: the aforementioned algorithms with `SHA256` and the `NIST P-256` curve.
 //! * `K163_SHA256_TAI`: the aforementioned algorithms with `SHA256` and the `NIST K-163` curve.
 //! * `SECP256K1_SHA256_TAI`: the aforementioned algorithms with `SHA256` and the `secp256k1` curve.
+
+use starknet::core::types::FieldElement;
 pub mod dummy;
 pub mod openssl;
 
@@ -33,7 +35,7 @@ pub trait VRF<PublicKey, SecretKey> {
     /// # Returns
     ///
     /// * If successful, a vector of octets representing the proof of the VRF.
-    fn prove(&mut self, x: SecretKey, alpha: &[u8]) -> Result<Vec<u8>, Self::Error>;
+    fn prove(&mut self, x: SecretKey, alpha: [FieldElement; 2]) -> Result<Vec<u8>, Self::Error>;
 
     /// Verifies the provided VRF proof and computes the VRF hash output.
     ///
@@ -45,5 +47,10 @@ pub trait VRF<PublicKey, SecretKey> {
     /// # Returns
     ///
     /// * If successful, a vector of octets with the VRF hash output.
-    fn verify(&mut self, y: PublicKey, pi: &[u8], alpha: &[u8]) -> Result<Vec<u8>, Self::Error>;
+    fn verify(
+        &mut self,
+        y: PublicKey,
+        pi: &[u8],
+        alpha: [FieldElement; 2],
+    ) -> Result<Vec<u8>, Self::Error>;
 }
