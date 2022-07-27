@@ -28,16 +28,17 @@ fn num_of_requests() -> u128 {
 async fn make_requests() {
     let provider = client_lib::starknet_nile_localhost();
 
-    let private_key =
-        fs::read_to_string("wallet-secret.txt").expect("Something went wrong reading the file");
+    let private_key = fs::read_to_string("secrets/local-wallet-secret.txt")
+        .expect("Something went wrong reading the file");
 
     let signer = LocalWallet::from(SigningKey::from_secret_scalar(
         FieldElement::from_hex_be(&private_key).unwrap(),
     ));
 
-    let account_contract_address =
-        FieldElement::from_hex_be("a2b80a672ba14339997ccf71274f57463a902cd740f9d0f02786bc3b440864")
-            .unwrap();
+    let account_contract_address = FieldElement::from_hex_be(
+        "43671e5493c011df2759d4d94a9f72ca23907d08cb1e0a5e48626f4275efc34",
+    )
+    .unwrap();
 
     let account = SingleOwnerAccount::new(
         provider.clone(),

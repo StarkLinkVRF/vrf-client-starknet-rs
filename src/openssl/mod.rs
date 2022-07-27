@@ -27,6 +27,7 @@ use std::io::{Read, Write};
 use std::{fmt, mem};
 extern crate hex_slice;
 use hex_slice::AsHex;
+use starknet::core::types::FieldElement;
 use std::str;
 use std::{
     fmt::{Debug, Formatter},
@@ -48,6 +49,8 @@ use openssl::{
     hash::{hash, MessageDigest},
     nid::Nid,
 };
+
+use starknet::core::crypto::pedersen_hash;
 
 use self::utils::{append_leading_zeros, bits2int, bits2octets};
 
@@ -304,10 +307,51 @@ impl ECVRF {
     /// # Returns
     ///
     /// * If successful, an `EcPoint` representing the hashed point.
+    ///
+
+    fn hash_inputs(
+        &mut self,
+        public_key: &EcPoint,
+        alpha: [FieldElement; 2],
+        ctr: FieldElement,
+    ) -> FieldElement {
+        let mut x = BigNum::new().unwrap();
+        let mut y = BigNum::new().unwrap();
+        let mut ctx = BigNumContext::new().unwrap();
+
+        public_key
+            .affine_coordinates(&self.group, &mut x, &mut y, &mut ctx)
+            .unwrap();
+
+        let split_x = utils::split_bigint(x);
+        let mut ctx = BigNumContext::new().unwrap();
+        let split_y = utils::split_bigint(y);
+        let mut inputs: Vec<FieldElement> = Vec::new();
+
+        inputs.push(FieldElement::from_dec_str("254").unwrap());
+        inputs.push(FieldElement::from_dec_str(&split_x.0.to_dec_str().unwrap()).unwrap());
+        inputs.push(FieldElement::from_dec_str(&split_x.1.to_dec_str().unwrap()).unwrap());
+        inputs.push(FieldElement::from_dec_str(&split_x.2.to_dec_str().unwrap()).unwrap());
+        inputs.push(FieldElement::from_dec_str(&split_y.0.to_dec_str().unwrap()).unwrap());
+        inputs.push(FieldElement::from_dec_str(&split_y.1.to_dec_str().unwrap()).unwrap());
+        inputs.push(FieldElement::from_dec_str(&split_y.2.to_dec_str().unwrap()).unwrap());
+
+        inputs.push(alpha[0]);
+        inputs.push(alpha[1]);
+
+        inputs.push(ctr);
+
+        let mut hash = pedersen_hash(&inputs[0], &inputs[1]);
+        for input in &inputs[2..inputs.len()] {
+            hash = pedersen_hash(&hash, input);
+        }
+
+        return hash;
+    }
     fn hash_to_try_and_increment(
         &mut self,
         public_key: &EcPoint,
-        alpha: &[u8],
+        alpha: [FieldElement; 2],
     ) -> Result<EcPoint, Error> {
         let mut c = 0..255;
         let mut pk_bytes = public_key.to_bytes(
@@ -328,27 +372,32 @@ impl ECVRF {
             i = i - 1;
         }
 
-        let mut v = [&cipher[..], &padded_bytes[..], alpha, &[0x00]].concat();
+        //let mut v = [&cipher[..], &padded_bytes[..], alpha, &[0x00]].concat();
         println!("pk {:x}", pk_bytes.as_hex());
         println!("padded_bytes {:x}", padded_bytes.as_hex());
-        let position = v.len() - 1;
-        // `Hash(cipher||PK||data)`
-        let mut point = c.find_map(|ctr| {
-            v[position] = ctr;
 
-            println!("v {:x}", v.as_hex());
+        // `Hash(cipher||PK||data)`
+        let mut point = c.find_map(|ctr: i32| {
+            //v[position] = ctr;
+
+            //println!("v {:x}", v.as_hex());
 
             //let attempted_hash = hash(self.hasher, &v);
-            let data: &mut [u8] = v.by_ref();
-            let res = keccak_hash::keccak(data);
+            //let data: &mut [u8] = v.by_ref();
+            //let res = keccak_hash::keccak(data);
             // Check validity of `H`
             //println!(" attempted string {:x} ", data.as_hex());
             //self.arbitrary_string_to_point(&data).ok()
 
-            let attempted_hash = keccak_hash::keccak(&v);
+            let attempted_hash = self.hash_inputs(
+                public_key,
+                alpha,
+                FieldElement::from_dec_str(&ctr.to_string()).unwrap(),
+            );
+
             // Check validity of `H`
             println!(" attempted string {} ", attempted_hash.to_string());
-            self.arbitrary_string_to_point(&attempted_hash.as_bytes())
+            self.arbitrary_string_to_point(&attempted_hash.to_bytes_be())
                 .ok()
         });
 
@@ -527,7 +576,7 @@ impl VRF<&[u8], &[u8]> for ECVRF {
     /// # Returns
     ///
     /// * If successful, a vector of octets representing the proof of the VRF.
-    fn prove(&mut self, x: &[u8], alpha: &[u8]) -> Result<Vec<u8>, Error> {
+    fn prove(&mut self, x: &[u8], alpha: [FieldElement; 2]) -> Result<Vec<u8>, Error> {
         // Step 1: derive public key from secret key
         // `Y = x * B`
         //TODO: validate secret key length?
@@ -587,7 +636,7 @@ impl VRF<&[u8], &[u8]> for ECVRF {
     /// # Returns
     ///
     /// * If successful, a vector of octets with the VRF hash output.
-    fn verify(&mut self, y: &[u8], pi: &[u8], alpha: &[u8]) -> Result<Vec<u8>, Error> {
+    fn verify(&mut self, y: &[u8], pi: &[u8], alpha: [FieldElement; 2]) -> Result<Vec<u8>, Error> {
         // Step 1: decode proof
         let (gamma_point, c, s) = self.decode_proof(pi)?;
 

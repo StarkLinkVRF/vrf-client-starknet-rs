@@ -1,3 +1,4 @@
+use core::time;
 use starknet::{
     accounts::{Account, Call, SingleOwnerAccount},
     core::{
@@ -8,7 +9,7 @@ use starknet::{
     providers::{Provider, SequencerGatewayProvider},
     signers::{LocalWallet, SigningKey},
 };
-use std::{fs, ops::Add};
+use std::{fs, ops::Add, time::Duration};
 use url::Url;
 use vrf::openssl::{CipherSuite, ECVRF};
 use vrf::VRF;
@@ -89,9 +90,11 @@ async fn get_request_events_from_transaction(
     return request_indexes;
 }
 
-pub async fn get_roll_result(dice_address: FieldElement, index: FieldElement) {
-    let provider = starknet_nile_localhost();
-
+pub async fn get_roll_result(
+    dice_address: FieldElement,
+    index: FieldElement,
+    provider: SequencerGatewayProvider,
+) {
     let call_result = provider
         .call_contract(
             InvokeFunctionTransactionRequest {
@@ -109,13 +112,13 @@ pub async fn get_roll_result(dice_address: FieldElement, index: FieldElement) {
     println!("get_roll_result {:?} ", call_result.result);
 }
 
-async fn resolve_rng_request(
+async fn compose_rng_request(
     account: SingleOwnerAccount<SequencerGatewayProvider, LocalWallet>,
     request_index: FieldElement,
     oracle_address: FieldElement,
     secret_key: Vec<u8>,
     mut vrf: ECVRF,
-) {
+) -> Call {
     let provider = account.provider().clone();
 
     let call_result = provider
@@ -151,7 +154,9 @@ async fn resolve_rng_request(
     let message: &[u8] = message_vec.as_ref();
 
     // VRF proof and hash output
-    let pi = vrf.prove(&secret_key, &message).unwrap();
+    let pi = vrf
+        .prove(&secret_key, [call_result.result[1], call_result.result[2]])
+        .unwrap();
 
     let (gamma_point, c, s) = vrf.decode_proof(&pi).expect("unable to decode proof");
 
@@ -163,42 +168,50 @@ async fn resolve_rng_request(
         .affine_coordinates(&vrf.group, &mut xbn, &mut ybn, &mut bn_ctx)
         .unwrap();
 
-    let (x1, x2, x3) = split(xbn, bn_ctx);
+    let (x1, x2, x3) = split_bigint(xbn, bn_ctx);
     let bn_ctx = BigNumContext::new().unwrap();
-    let (y1, y2, y3) = split(ybn, bn_ctx);
+    let (y1, y2, y3) = split_bigint(ybn, bn_ctx);
     let bn_ctx = BigNumContext::new().unwrap();
-    let (c1, c2, c3) = split(c, bn_ctx);
+    let (c1, c2, c3) = split_bigint(c, bn_ctx);
     let bn_ctx = BigNumContext::new().unwrap();
-    let (s1, s2, s3) = split(s, bn_ctx);
+    let (s1, s2, s3) = split_bigint(s, bn_ctx);
 
-    account
-        .execute(&[Call {
-            to: oracle_address,
-            selector: get_selector_from_name("resolve_rng_request").unwrap(),
-            calldata: vec![
-                request_index,
-                FieldElement::from_hex_be(&x1.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&x2.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&x3.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&y1.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&y2.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&y3.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&c1.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&c2.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&c3.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&s1.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&s2.to_hex_str().unwrap().to_string()).unwrap(),
-                FieldElement::from_hex_be(&s3.to_hex_str().unwrap().to_string()).unwrap(),
-            ],
-        }])
-        .send()
-        .await
-        .expect("resolve_rng_request failed");
+    println!("request_index {}", request_index);
+    println!("x1 {}", x1);
+    println!("x2 {}", x2);
+    println!("x3 {}", x3);
+    println!("y1 {}", y1);
+    println!("y2 {}", y2);
+    println!("y3 {}", y3);
+    println!("c1 {}", c1);
+    println!("c2 {}", c2);
+    println!("c3 {}", c3);
+    println!("s1 {}", s1);
+    println!("s2 {}", s2);
+    println!("s3 {}", s3);
 
-    return ();
+    return Call {
+        to: oracle_address,
+        selector: get_selector_from_name("resolve_rng_request").unwrap(),
+        calldata: vec![
+            request_index,
+            FieldElement::from_hex_be(&x1.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&x2.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&x3.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&y1.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&y2.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&y3.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&c1.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&c2.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&c3.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&s1.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&s2.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&s3.to_hex_str().unwrap().to_string()).unwrap(),
+        ],
+    };
 }
 
-fn split(x: BigNum, mut bn_ctx: BigNumContext) -> (BigNum, BigNum, BigNum) {
+fn split_bigint(x: BigNum, mut bn_ctx: BigNumContext) -> (BigNum, BigNum, BigNum) {
     let mut bits_86 = BigNum::from_dec_str("77371252455336267181195264").unwrap();
 
     let mut rem = BigNum::new().unwrap();
@@ -240,12 +253,38 @@ pub async fn resolve_rng_requests(
     request_indexes: Vec<FieldElement>,
     oracle_address: FieldElement,
     secret_key: Vec<u8>,
-) {
-    for request_index in request_indexes {
+) -> Option<FieldElement> {
+    let delay = time::Duration::from_secs(3);
+
+    let mut requests: Vec<Call> = Vec::new();
+    for request_index in request_indexes.clone() {
+        println!("request_index {}", request_index);
         let sk = secret_key.clone();
         let vrf = ECVRF::from_suite(CipherSuite::SECP256K1_SHA256_TAI).unwrap();
-        resolve_rng_request(account.clone(), request_index, oracle_address, sk, vrf).await;
+        let request =
+            compose_rng_request(account.clone(), request_index, oracle_address, sk, vrf).await;
+        requests.push(request);
     }
+
+    let mut tx_hash: Option<FieldElement> = Option::None;
+    let mut is_request_successful = false;
+
+    while is_request_successful == false {
+        let call = account.execute(&requests).send().await;
+        match call {
+            Ok(call) => {
+                println!("resolve request method invoked {}", call.transaction_hash);
+                tx_hash = Option::Some(call.transaction_hash);
+                is_request_successful = true
+            }
+            Err(error) => {
+                println!("Error with resolving rng request \n {}", error);
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+        }
+    }
+
+    return tx_hash;
 }
 
 fn main() {
@@ -297,13 +336,13 @@ mod test_client_lib {
     use crate::client_lib;
 
     #[test]
-    fn test_split() {
+    fn test_split_bigint() {
         let mut x = BigNum::from_dec_str(
             "115792089237316195423570985008687907853269984665640564039457584007913129639935",
         )
         .expect("error parsing bignumer");
         let mut bn_ctx = BigNumContext::new().unwrap();
-        let (x1, x2, x3) = client_lib::split(x, bn_ctx);
+        let (x1, x2, x3) = client_lib::split_bigint(x, bn_ctx);
         println!("x1, x2, x3 {} {} {}", x1, x2, x3);
 
         let packed = client_lib::pack(x1, x2, x3);

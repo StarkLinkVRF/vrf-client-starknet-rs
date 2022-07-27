@@ -1,44 +1,32 @@
 // Scheduler, and trait for .seconds(), .minutes(), etc.
-use clokwerk::{AsyncScheduler, TimeUnits};
 
-use serde::__private::de::IdentifierDeserializer;
 // Import week days and WeekDay
 use starknet::accounts::SingleOwnerAccount;
 use starknet::core::chain_id;
-use starknet::core::types::{BlockId, FieldElement};
+use starknet::core::types::{BlockId, FieldElement, TransactionStatus};
 use starknet::providers::{Provider, SequencerGatewayProvider};
 use starknet::signers::{LocalWallet, SigningKey};
 use std::env;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
 use std::time::Duration;
 
 mod client_lib;
 
+#[derive(Clone)]
+struct AccountInstance {
+    private_key: FieldElement,
+    account_address: FieldElement,
+    current_tx: Option<FieldElement>,
+}
+
 const ORACLE_ADDRESS_STRING: &str =
-    "0540d7a06267f177f84a323d2b4b92b8ac259f97eb2c398b29da888fbb3a30b2";
-const DICE_ADDRESS_STRING: &str =
-    "04cc9e47b19af7a008ae2eb4d420ce7e215e3ccdf8f6cd99db72b97f933a516a";
+    "0746077cd8eb9cce682daf051bb1fec88f3ba7c6e75e2413bb09a210ab9a2514";
 
-const WALLET_ADDRESS_STRING: &str =
-    "7b1fa023a35b606f3790ae70a3ed1172238be1e7ea9e740bb66255747118f6a";
-
-async fn respond_to_requests(block_number: Option<u64>) -> Option<u64> {
-    let args: Vec<String> = env::args().collect();
-
-    println!("{:?}", args);
-    let network = args[1].clone();
-
-    let mut provider = client_lib::starknet_nile_localhost();
-    if network.eq(&String::from("goerli")) {
-        provider = SequencerGatewayProvider::starknet_alpha_goerli();
-    } else if network.eq(&String::from("local")) {
-        provider = client_lib::starknet_nile_localhost();
-    } else if network.eq(&String::from("mainnet")) {
-        provider = SequencerGatewayProvider::starknet_alpha_mainnet()
-    } else {
-        panic!("no enviornment find, use goerli, local")
-    }
-
+async fn fetch_new_requests(
+    block_number: Option<u64>,
+    provider: SequencerGatewayProvider,
+) -> (Option<u64>, Option<Vec<FieldElement>>) {
     let latest_block_number = provider
         .get_block(BlockId::Latest)
         .await
@@ -53,6 +41,9 @@ async fn respond_to_requests(block_number: Option<u64>) -> Option<u64> {
         None => block_num = latest_block_number,
     }
 
+    if block_num == latest_block_number {
+        return (Some(block_num), None);
+    }
     let mut all_requests: Vec<FieldElement> = Vec::new();
 
     println!(
@@ -62,10 +53,10 @@ async fn respond_to_requests(block_number: Option<u64>) -> Option<u64> {
 
     let oracle_address = FieldElement::from_hex_be(ORACLE_ADDRESS_STRING).unwrap();
 
-    for n in block_num..latest_block_number {
+    for n in block_num + 1..=latest_block_number {
         println!("Querying provider for block number #{}", n);
         let mut request_indexes =
-            client_lib::get_rng_request_events(provider.clone(), oracle_address, block_num).await;
+            client_lib::get_rng_request_events(provider.clone(), oracle_address, n).await;
 
         if request_indexes.len() == 0 {
             println!("Found no request for block number #{}", n);
@@ -84,21 +75,19 @@ async fn respond_to_requests(block_number: Option<u64>) -> Option<u64> {
             " No requests found, #{} to #{} \n Returning",
             block_num, latest_block_number
         );
-        return Some(latest_block_number);
+        return (Some(latest_block_number), None);
     }
 
-    let mut wallet_private_key = "secrets/".to_owned();
-    wallet_private_key.push_str(&network);
-    wallet_private_key.push_str("-wallet-secret.txt");
+    return (Some(latest_block_number), Some(all_requests));
+}
 
-    let private_key =
-        fs::read_to_string(wallet_private_key).expect("Something went wrong reading the file");
-
-    let signer = LocalWallet::from(SigningKey::from_secret_scalar(
-        FieldElement::from_hex_be(&private_key).unwrap(),
-    ));
-
-    let account_contract_address = FieldElement::from_hex_be(WALLET_ADDRESS_STRING).unwrap();
+async fn respond_to_request(
+    account: AccountInstance,
+    provider: SequencerGatewayProvider,
+    network: String,
+    request: FieldElement,
+) -> Option<FieldElement> {
+    let signer = LocalWallet::from(SigningKey::from_secret_scalar(account.private_key));
 
     let mut chain_id = chain_id::TESTNET;
     if network.eq("mainnet") {
@@ -106,33 +95,175 @@ async fn respond_to_requests(block_number: Option<u64>) -> Option<u64> {
     }
 
     let account =
-        SingleOwnerAccount::new(provider.clone(), signer, account_contract_address, chain_id);
+        SingleOwnerAccount::new(provider.clone(), signer, account.account_address, chain_id);
 
     let vrf_private_key = fs::read_to_string("secrets/vrf-secret.txt")
         .expect("Something went wrong reading the file");
 
     let secret_key = hex::decode(&vrf_private_key).unwrap();
 
-    client_lib::resolve_rng_requests(account, all_requests.clone(), oracle_address, secret_key)
-        .await;
+    let oracle_address = FieldElement::from_hex_be(ORACLE_ADDRESS_STRING).unwrap();
 
-    let dice_address = FieldElement::from_hex_be(DICE_ADDRESS_STRING).unwrap();
+    let mut all_requests = Vec::new();
+    all_requests.push(request);
+    let tx_hash =
+        client_lib::resolve_rng_requests(account, all_requests.clone(), oracle_address, secret_key)
+            .await;
 
-    for index in all_requests.clone() {
-        client_lib::get_roll_result(dice_address.clone(), index).await
+    return tx_hash;
+}
+
+async fn respond_to_requests(
+    mut requests: Vec<FieldElement>,
+    accounts: Vec<AccountInstance>,
+    provider: SequencerGatewayProvider,
+    network: String,
+) -> (Vec<FieldElement>, Vec<AccountInstance>) {
+    if requests.len() == 0 {
+        return (requests, accounts);
     }
 
-    return Some(latest_block_number);
+    let mut fresh_account_instances = Vec::new();
+    for account in accounts {
+        if requests.len() == 0 {
+            fresh_account_instances.push(account.clone());
+            continue;
+        }
+
+        let mut tx_status = TransactionStatus::Pending;
+        match account.current_tx {
+            Some(tx) => {
+                let get_tx_status_req = provider.get_transaction_status(tx).await;
+
+                match get_tx_status_req {
+                    Ok(status) => tx_status = status.status,
+                    Err(e) => {
+                        print!("{}", e)
+                    }
+                }
+            }
+            None => tx_status = TransactionStatus::AcceptedOnL1,
+        }
+
+        if tx_status != TransactionStatus::Pending
+            && tx_status != TransactionStatus::Received
+            && tx_status != TransactionStatus::NotReceived
+        {
+            let request = requests.pop();
+
+            match request {
+                Some(req) => {
+                    let tx_hash =
+                        respond_to_request(account.clone(), provider.clone(), network.clone(), req)
+                            .await;
+
+                    fresh_account_instances.push(AccountInstance {
+                        private_key: account.private_key,
+                        account_address: account.account_address,
+                        current_tx: tx_hash,
+                    })
+                }
+                None => {}
+            }
+        } else {
+            fresh_account_instances.push(account.clone())
+        }
+    }
+
+    return (requests, fresh_account_instances);
+}
+
+async fn get_provider(network: String) -> SequencerGatewayProvider {
+    let mut provider = client_lib::starknet_nile_localhost();
+    if network.eq(&String::from("goerli")) {
+        provider = SequencerGatewayProvider::starknet_alpha_goerli();
+    } else if network.eq(&String::from("local")) {
+        provider = client_lib::starknet_nile_localhost();
+    } else if network.eq(&String::from("mainnet")) {
+        provider = SequencerGatewayProvider::starknet_alpha_mainnet()
+    } else {
+        panic!("no enviornment find, use goerli, local")
+    }
+    return provider;
+}
+
+async fn assemble_account_instances(network: String) -> Vec<AccountInstance> {
+    let mut account_private_key_location = "secrets/".to_owned();
+    account_private_key_location.push_str(&network);
+    account_private_key_location.push_str("-wallet-secret.txt");
+
+    let f = File::open(account_private_key_location).unwrap();
+    let reader = BufReader::new(f);
+
+    let mut available_accounts: Vec<FieldElement> = Vec::new();
+    for available_account in reader.lines() {
+        available_accounts.push(FieldElement::from_hex_be(&available_account.unwrap()).unwrap());
+    }
+
+    let mut account_address_location = "secrets/".to_owned();
+    account_address_location.push_str(&network);
+    account_address_location.push_str("-wallet-address.txt");
+
+    let f = File::open(account_address_location).unwrap();
+    let reader = BufReader::new(f);
+
+    let mut account_addresses: Vec<FieldElement> = Vec::new();
+    for address in reader.lines() {
+        account_addresses.push(FieldElement::from_hex_be(&address.unwrap()).unwrap());
+    }
+
+    if available_accounts.len() != account_addresses.len() {
+        panic!("each private key needs a corresponding address")
+    }
+    let mut account_instances: Vec<AccountInstance> = Vec::new();
+
+    for i in 0..available_accounts.len() {
+        let instance = AccountInstance {
+            private_key: available_accounts[i],
+            account_address: account_addresses[i],
+            current_tx: None,
+        };
+        account_instances.push(instance);
+    }
+
+    return account_instances;
 }
 
 #[tokio::main]
 async fn main() {
+    let args: Vec<String> = env::args().collect();
+    let network = String::from("goerli");
+
+    let provider = get_provider(network.clone()).await;
+
     let mut block_number: Option<u64> = Option::None;
+
+    let mut account_instances = assemble_account_instances(network.clone()).await;
+
+    let mut request_pool: Vec<FieldElement> = Vec::new();
     tokio::spawn(async move {
         loop {
             println!("looking at block {:?}", block_number);
-            block_number = respond_to_requests(block_number).await;
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            let (latest_block_number, new_requests) =
+                fetch_new_requests(block_number, provider.clone()).await;
+
+            block_number = latest_block_number;
+            match new_requests {
+                Some(mut reqs) => request_pool.append(&mut reqs),
+                None => {}
+            }
+
+            let (updated_request_pool, fresh_instances) = respond_to_requests(
+                request_pool.clone(),
+                account_instances.clone(),
+                provider.clone(),
+                network.clone(),
+            )
+            .await;
+
+            request_pool = updated_request_pool;
+            account_instances = fresh_instances;
+            tokio::time::sleep(Duration::from_secs(15)).await;
         }
     })
     .await
