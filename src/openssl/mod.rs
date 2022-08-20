@@ -312,7 +312,7 @@ impl ECVRF {
     fn hash_inputs(
         &mut self,
         public_key: &EcPoint,
-        alpha: [FieldElement; 2],
+        alpha: FieldElement,
         ctr: FieldElement,
     ) -> FieldElement {
         let mut x = BigNum::new().unwrap();
@@ -336,8 +336,7 @@ impl ECVRF {
         inputs.push(FieldElement::from_dec_str(&split_y.1.to_dec_str().unwrap()).unwrap());
         inputs.push(FieldElement::from_dec_str(&split_y.2.to_dec_str().unwrap()).unwrap());
 
-        inputs.push(alpha[0]);
-        inputs.push(alpha[1]);
+        inputs.push(alpha);
 
         inputs.push(ctr);
 
@@ -351,7 +350,7 @@ impl ECVRF {
     fn hash_to_try_and_increment(
         &mut self,
         public_key: &EcPoint,
-        alpha: [FieldElement; 2],
+        alpha: FieldElement,
     ) -> Result<EcPoint, Error> {
         let mut c = 0..255;
         let mut pk_bytes = public_key.to_bytes(
@@ -576,7 +575,7 @@ impl VRF<&[u8], &[u8]> for ECVRF {
     /// # Returns
     ///
     /// * If successful, a vector of octets representing the proof of the VRF.
-    fn prove(&mut self, x: &[u8], alpha: [FieldElement; 2]) -> Result<Vec<u8>, Error> {
+    fn prove(&mut self, x: &[u8], alpha: FieldElement) -> Result<Vec<u8>, Error> {
         // Step 1: derive public key from secret key
         // `Y = x * B`
         //TODO: validate secret key length?
@@ -636,7 +635,7 @@ impl VRF<&[u8], &[u8]> for ECVRF {
     /// # Returns
     ///
     /// * If successful, a vector of octets with the VRF hash output.
-    fn verify(&mut self, y: &[u8], pi: &[u8], alpha: [FieldElement; 2]) -> Result<Vec<u8>, Error> {
+    fn verify(&mut self, y: &[u8], pi: &[u8], alpha: FieldElement) -> Result<Vec<u8>, Error> {
         // Step 1: decode proof
         let (gamma_point, c, s) = self.decode_proof(pi)?;
 

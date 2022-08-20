@@ -21,7 +21,7 @@ impl<'a> VRF<PublicKey<'a>, SecretKey<'a>> for DummyVRF {
     type Error = Error;
 
     // Generate proof from key pair and message
-    fn prove(&mut self, _x: SecretKey, _alpha: [FieldElement; 2]) -> Result<Vec<u8>, Self::Error> {
+    fn prove(&mut self, _x: SecretKey, _alpha: FieldElement) -> Result<Vec<u8>, Self::Error> {
         Ok(vec![])
     }
 
@@ -30,7 +30,7 @@ impl<'a> VRF<PublicKey<'a>, SecretKey<'a>> for DummyVRF {
         &mut self,
         _y: PublicKey,
         _pi: &[u8],
-        _alpha: [FieldElement; 2],
+        _alpha: FieldElement,
     ) -> Result<Vec<u8>, Self::Error> {
         Ok(vec![])
     }
