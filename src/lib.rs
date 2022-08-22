@@ -35,7 +35,7 @@ pub trait VRF<PublicKey, SecretKey> {
     /// # Returns
     ///
     /// * If successful, a vector of octets representing the proof of the VRF.
-    fn prove(&mut self, x: SecretKey, alpha: [FieldElement; 2]) -> Result<Vec<u8>, Self::Error>;
+    fn prove(&mut self, x: SecretKey, alpha: FieldElement) -> Result<Vec<u8>, Self::Error>;
 
     /// Verifies the provided VRF proof and computes the VRF hash output.
     ///
@@ -51,6 +51,6 @@ pub trait VRF<PublicKey, SecretKey> {
         &mut self,
         y: PublicKey,
         pi: &[u8],
-        alpha: [FieldElement; 2],
+        alpha: FieldElement,
     ) -> Result<Vec<u8>, Self::Error>;
 }
