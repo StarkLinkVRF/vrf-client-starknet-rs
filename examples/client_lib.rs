@@ -14,7 +14,7 @@ use url::Url;
 use vrf::openssl::{CipherSuite, ECVRF};
 use vrf::VRF;
 
-use openssl::bn::{BigNum, BigNumContext};
+use openssl::{bn::{BigNum, BigNumContext}, ec::EcPoint};
 pub async fn make_rng_request(
     account: SingleOwnerAccount<SequencerGatewayProvider, LocalWallet>,
     dice_address: FieldElement,
@@ -137,27 +137,12 @@ async fn compose_rng_request(
 
     println!("get_request res {:?} ", call_result.result);
 
-    let alpha_low = call_result.result[1].to_bytes_be();
-    let alpha_high = call_result.result[2].to_bytes_be();
-
-    let mut message_vec = alpha_high
-        .get(16..32)
-        .expect("error getting low bits")
-        .to_vec();
-    let mut message_vec_low = alpha_low
-        .get(16..32)
-        .expect("error getting low bits")
-        .to_vec();
-
-    message_vec.append(&mut message_vec_low);
-
-    let message: &[u8] = message_vec.as_ref();
-
     // VRF proof and hash output
     let pi = vrf
-        .prove(&secret_key, [call_result.result[1], call_result.result[2]])
+        .prove(&secret_key, call_result.result[1])
         .unwrap();
 
+    let (pub_key )= vrf.derive_public_key(&secret_key).expect("unable to derive public key");
     let (gamma_point, c, s) = vrf.decode_proof(&pi).expect("unable to decode proof");
 
     let mut xbn = BigNum::new().unwrap();
@@ -175,6 +160,16 @@ async fn compose_rng_request(
     let (c1, c2, c3) = split_bigint(c, bn_ctx);
     let bn_ctx = BigNumContext::new().unwrap();
     let (s1, s2, s3) = split_bigint(s, bn_ctx);
+    let bn_ctx = BigNumContext::new().unwrap();
+    
+    let mut xbn2 = BigNum::new().unwrap();
+    let mut ybn2 = BigNum::new().unwrap();
+    let public_key_point = EcPoint::from_bytes(&vrf.group, &pub_key, &mut vrf.bn_ctx).expect("error decoding public key");
+    public_key_point
+        .affine_coordinates(&vrf.group, &mut xbn2, &mut ybn2, &mut vrf.bn_ctx)
+        .unwrap();
+    let (px1, px2, px3) = split_bigint(xbn2, bn_ctx);
+    let (py1, py2, py3) = split_bigint(ybn2, vrf.bn_ctx);
 
     println!("request_index {}", request_index);
     println!("x1 {}", x1);
@@ -189,6 +184,12 @@ async fn compose_rng_request(
     println!("s1 {}", s1);
     println!("s2 {}", s2);
     println!("s3 {}", s3);
+    println!("px1 {}", px1);
+    println!("px2 {}", px2);
+    println!("px3 {}", px3);
+    println!("py1 {}", py1);
+    println!("py2 {}", py2);
+    println!("py3 {}", py3);
 
     return Call {
         to: oracle_address,
@@ -207,6 +208,12 @@ async fn compose_rng_request(
             FieldElement::from_hex_be(&s1.to_hex_str().unwrap().to_string()).unwrap(),
             FieldElement::from_hex_be(&s2.to_hex_str().unwrap().to_string()).unwrap(),
             FieldElement::from_hex_be(&s3.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&px1.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&px2.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&px3.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&py1.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&py2.to_hex_str().unwrap().to_string()).unwrap(),
+            FieldElement::from_hex_be(&py3.to_hex_str().unwrap().to_string()).unwrap(),
         ],
     };
 }
