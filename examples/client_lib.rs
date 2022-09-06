@@ -9,7 +9,7 @@ use starknet::{
     providers::{Provider, SequencerGatewayProvider},
     signers::{LocalWallet, SigningKey},
 };
-use std::{fs, ops::Add, time::Duration};
+use std::{ops::Add, time::Duration, env};
 use url::Url;
 use vrf::openssl::{CipherSuite, ECVRF};
 use vrf::VRF;
@@ -142,7 +142,7 @@ async fn compose_rng_request(
         .prove(&secret_key, call_result.result[1])
         .unwrap();
 
-    let (pub_key )= vrf.derive_public_key(&secret_key).expect("unable to derive public key");
+    let pub_key = vrf.derive_public_key(&secret_key).expect("unable to derive public key");
     let (gamma_point, c, s) = vrf.decode_proof(&pi).expect("unable to decode proof");
 
     let mut xbn = BigNum::new().unwrap();
@@ -296,7 +296,7 @@ pub async fn resolve_rng_requests(
 
 fn main() {
     let private_key =
-        fs::read_to_string("wallet-secret.txt").expect("Something went wrong reading the file");
+        env::var("WALLET_SECRET").expect("No env variable of key WALLET_SECRET");
     // Query contract event
     let provider = starknet_nile_localhost();
     let signer = LocalWallet::from(SigningKey::from_secret_scalar(

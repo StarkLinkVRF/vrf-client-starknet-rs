@@ -5,3 +5,4 @@ Cargo.lock
 vrf-secret.txt
 wallet-secret.txt
 /secrets/
+wallet-address.txt
