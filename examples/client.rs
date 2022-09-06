@@ -7,7 +7,7 @@ use starknet::core::types::{BlockId, FieldElement, TransactionStatus};
 use starknet::providers::{Provider, SequencerGatewayProvider};
 use starknet::signers::{LocalWallet, SigningKey};
 use std::env;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::Duration;
 
@@ -97,8 +97,8 @@ async fn respond_to_request(
     let account =
         SingleOwnerAccount::new(provider.clone(), signer, account.account_address, chain_id);
 
-    let vrf_private_key = fs::read_to_string("secrets/vrf-secret.txt")
-        .expect("Something went wrong reading the file");
+    let vrf_private_key = env::var("VRF_SECRET")
+        .expect("No env variable of key VRF_SECRET");
 
     let secret_key = hex::decode(&vrf_private_key).unwrap();
 
@@ -188,9 +188,7 @@ async fn get_provider(network: String) -> SequencerGatewayProvider {
 }
 
 async fn assemble_account_instances(network: String) -> Vec<AccountInstance> {
-    let mut account_private_key_location = "secrets/".to_owned();
-    account_private_key_location.push_str(&network);
-    account_private_key_location.push_str("-wallet-secret.txt");
+    let account_private_key_location = "wallet-secret.txt".to_owned();
 
     let f = File::open(account_private_key_location).unwrap();
     let reader = BufReader::new(f);
@@ -200,9 +198,7 @@ async fn assemble_account_instances(network: String) -> Vec<AccountInstance> {
         available_accounts.push(FieldElement::from_hex_be(&available_account.unwrap()).unwrap());
     }
 
-    let mut account_address_location = "secrets/".to_owned();
-    account_address_location.push_str(&network);
-    account_address_location.push_str("-wallet-address.txt");
+    let account_address_location = "wallet-address.txt".to_owned();
 
     let f = File::open(account_address_location).unwrap();
     let reader = BufReader::new(f);
@@ -231,8 +227,8 @@ async fn assemble_account_instances(network: String) -> Vec<AccountInstance> {
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = env::args().collect();
-    let network = String::from("goerli");
+
+    let network = env::var("NETWORK").expect("No variable of key NETWORK specified");
 
     let provider = get_provider(network.clone()).await;
 

@@ -7,9 +7,13 @@ The VRF spec is described in [VRF-draft-05](https://tools.ietf.org/pdf/draft-irt
 
 The library can be built using `cargo` and the examples can be executed with:
 
+## Running 
+
+Create two files, wallet-address.txt and wallet-secret.txt in the root directory. List your addresses and secrets in a list. Multiple wallets allow better throughput of the vrf.
+
 ```bash
 cargo build
-cargo run --example basic
+NETWORK=<choose network> VRF_SECRET=<your vrf secret key> cargo run --example client
 ```
 Until this project has the capabilities to interect with StarkNet itself it can be viewed as a script that take inputs from the blockchain and spits out a result to be put manually back onto the blockchain.
 
