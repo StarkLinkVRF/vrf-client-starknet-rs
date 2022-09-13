@@ -13,7 +13,7 @@ Create two files, wallet-address.txt and wallet-secret.txt in the root directory
 
 ```bash
 cargo build
-NETWORK=<choose network> VRF_SECRET=<your vrf secret key> cargo run --example client
+NETWORK=<choose network> VRF_SECRET=<your vrf secret key> ORACLE_ADDRESS=<address of the deployed oracle contract> cargo run --example client
 ```
 Until this project has the capabilities to interect with StarkNet itself it can be viewed as a script that take inputs from the blockchain and spits out a result to be put manually back onto the blockchain.
 

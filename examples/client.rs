@@ -20,12 +20,10 @@ struct AccountInstance {
     current_tx: Option<FieldElement>,
 }
 
-const ORACLE_ADDRESS_STRING: &str =
-    "0746077cd8eb9cce682daf051bb1fec88f3ba7c6e75e2413bb09a210ab9a2514";
-
 async fn fetch_new_requests(
     block_number: Option<u64>,
     provider: SequencerGatewayProvider,
+    oracle_address : String
 ) -> (Option<u64>, Option<Vec<FieldElement>>) {
     let latest_block_number = provider
         .get_block(BlockId::Latest)
@@ -51,7 +49,7 @@ async fn fetch_new_requests(
         block_num, latest_block_number
     );
 
-    let oracle_address = FieldElement::from_hex_be(ORACLE_ADDRESS_STRING).unwrap();
+    let oracle_address = FieldElement::from_hex_be(&oracle_address).unwrap();
 
     for n in block_num + 1..=latest_block_number {
         println!("Querying provider for block number #{}", n);
@@ -86,6 +84,7 @@ async fn respond_to_request(
     provider: SequencerGatewayProvider,
     network: String,
     request: FieldElement,
+    oracle_address :String
 ) -> Option<FieldElement> {
     let signer = LocalWallet::from(SigningKey::from_secret_scalar(account.private_key));
 
@@ -102,7 +101,7 @@ async fn respond_to_request(
 
     let secret_key = hex::decode(&vrf_private_key).unwrap();
 
-    let oracle_address = FieldElement::from_hex_be(ORACLE_ADDRESS_STRING).unwrap();
+    let oracle_address = FieldElement::from_hex_be(&oracle_address).unwrap();
 
     let mut all_requests = Vec::new();
     all_requests.push(request);
@@ -118,6 +117,7 @@ async fn respond_to_requests(
     accounts: Vec<AccountInstance>,
     provider: SequencerGatewayProvider,
     network: String,
+    oracle_address : String
 ) -> (Vec<FieldElement>, Vec<AccountInstance>) {
     if requests.len() == 0 {
         return (requests, accounts);
@@ -154,7 +154,7 @@ async fn respond_to_requests(
             match request {
                 Some(req) => {
                     let tx_hash =
-                        respond_to_request(account.clone(), provider.clone(), network.clone(), req)
+                        respond_to_request(account.clone(), provider.clone(), network.clone(), req, oracle_address.clone())
                             .await;
 
                     fresh_account_instances.push(AccountInstance {
@@ -232,6 +232,8 @@ async fn main() {
 
     let provider = get_provider(network.clone()).await;
 
+    let oracle_address:String = env::var("ORACLE_ADDRESS").expect("No variable of key ORACLE_ADDRESS specified");
+
     let mut block_number: Option<u64> = Option::None;
 
     let mut account_instances = assemble_account_instances(network.clone()).await;
@@ -241,7 +243,7 @@ async fn main() {
         loop {
             println!("looking at block {:?}", block_number);
             let (latest_block_number, new_requests) =
-                fetch_new_requests(block_number, provider.clone()).await;
+                fetch_new_requests(block_number, provider.clone(), oracle_address.clone()).await;
 
             block_number = latest_block_number;
             match new_requests {
@@ -254,6 +256,7 @@ async fn main() {
                 account_instances.clone(),
                 provider.clone(),
                 network.clone(),
+                oracle_address.clone()
             )
             .await;
 
