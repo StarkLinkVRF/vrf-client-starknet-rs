@@ -2,7 +2,7 @@ use core::time;
 use starknet::{
     accounts::{Account, Call, SingleOwnerAccount},
     core::{
-        chain_id, types::BlockId, types::ConfirmedTransactionReceipt, types::FieldElement,
+        chain_id, types::BlockId, types::ConfirmedTransactionReceipt, types::{FieldElement, CallFunction},
         types::InvokeFunctionTransactionRequest, utils::get_selector_from_name,
     },
     macros::selector,
@@ -34,8 +34,8 @@ pub async fn make_rng_request(
 
 pub fn starknet_nile_localhost() -> SequencerGatewayProvider {
     SequencerGatewayProvider::new(
-        Url::parse("http://127.0.0.1:5050/gateway").unwrap(),
-        Url::parse("http://127.0.0.1:5050/feeder_gateway").unwrap(),
+        Url::parse("http://127.17.0.2:5000/gateway").unwrap(),
+        Url::parse("http://127.17.0.2:5000/feeder_gateway").unwrap(),
     )
 }
 pub async fn get_latest_block(provider: SequencerGatewayProvider) -> starknet::core::types::Block {
@@ -97,12 +97,10 @@ pub async fn get_roll_result(
 ) {
     let call_result = provider
         .call_contract(
-            InvokeFunctionTransactionRequest {
+            CallFunction {
                 contract_address: dice_address,
                 entry_point_selector: selector!("get_roll_result"),
-                calldata: vec![index],
-                signature: vec![],
-                max_fee: FieldElement::ZERO,
+                calldata: vec![index]
             },
             BlockId::Latest,
         )
@@ -123,12 +121,10 @@ async fn compose_rng_request(
 
     let call_result = provider
         .call_contract(
-            InvokeFunctionTransactionRequest {
+            CallFunction {
                 contract_address: oracle_address,
                 entry_point_selector: selector!("get_request"),
-                calldata: vec![request_index],
-                signature: vec![],
-                max_fee: FieldElement::ZERO,
+                calldata: vec![request_index]
             },
             BlockId::Latest,
         )
