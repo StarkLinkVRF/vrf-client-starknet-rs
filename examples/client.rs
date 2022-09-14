@@ -230,9 +230,15 @@ async fn main() {
 
     let network = env::var("NETWORK").expect("No variable of key NETWORK specified");
 
+    println!("network {}", network);
+    
     let provider = get_provider(network.clone()).await;
 
+    println!("provider {}", provider);
+
     let oracle_address:String = env::var("ORACLE_ADDRESS").expect("No variable of key ORACLE_ADDRESS specified");
+
+    println!("oracle address {}", oracle_address);
 
     let mut block_number: Option<u64> = Option::None;
 
