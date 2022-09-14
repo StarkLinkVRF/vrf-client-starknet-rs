@@ -98,7 +98,7 @@ async fn respond_to_request(
 
     let vrf_private_key = env::var("VRF_SECRET")
         .expect("No env variable of key VRF_SECRET");
-
+    
     let secret_key = hex::decode(&vrf_private_key).unwrap();
 
     let oracle_address = FieldElement::from_hex_be(&oracle_address).unwrap();
@@ -233,8 +233,6 @@ async fn main() {
     println!("network {}", network);
     
     let provider = get_provider(network.clone()).await;
-
-    println!("provider {}", provider);
 
     let oracle_address:String = env::var("ORACLE_ADDRESS").expect("No variable of key ORACLE_ADDRESS specified");
 
