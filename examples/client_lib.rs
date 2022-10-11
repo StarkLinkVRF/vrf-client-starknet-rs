@@ -57,12 +57,13 @@ pub async fn get_rng_request_events(
     provider: SequencerGatewayProvider,
     oracle_address: FieldElement,
     block_number: u64,
+    public_key_hash : FieldElement
 ) -> Vec<FieldElement> {
     let block = get_block(provider, block_number).await;
 
     let mut request_indexes: Vec<FieldElement> = Vec::new();
     for tx in block.transaction_receipts {
-        let mut fresh_indexes = get_request_events_from_transaction(tx, oracle_address).await;
+        let mut fresh_indexes = get_request_events_from_transaction(tx, oracle_address, public_key_hash).await;
         if fresh_indexes.len() > 0 {
             request_indexes.append(&mut fresh_indexes)
         }
@@ -74,6 +75,7 @@ pub async fn get_rng_request_events(
 async fn get_request_events_from_transaction(
     tx_reciept: ConfirmedTransactionReceipt,
     oracle_address: FieldElement,
+    public_key_hash : FieldElement
 ) -> Vec<FieldElement> {
     let request_recieved_event = FieldElement::from_hex_be(
         "03ded866cf2d43aad7d6e5e86532c54ec2f559610ec8efd833005abe66bfdd52",
@@ -82,7 +84,7 @@ async fn get_request_events_from_transaction(
 
     let mut request_indexes: Vec<FieldElement> = Vec::new();
     for event in tx_reciept.events {
-        if event.from_address == oracle_address && event.keys[0] == request_recieved_event {
+        if event.from_address == oracle_address && event.keys[0] == request_recieved_event && event.data[1] == public_key_hash {
             request_indexes.push(event.data[0])
         }
     }
@@ -214,7 +216,7 @@ async fn compose_rng_request(
     };
 }
 
-fn split_bigint(x: BigNum, mut bn_ctx: BigNumContext) -> (BigNum, BigNum, BigNum) {
+pub fn split_bigint(x: BigNum, mut bn_ctx: BigNumContext) -> (BigNum, BigNum, BigNum) {
     let mut bits_86 = BigNum::from_dec_str("77371252455336267181195264").unwrap();
 
     let mut rem = BigNum::new().unwrap();

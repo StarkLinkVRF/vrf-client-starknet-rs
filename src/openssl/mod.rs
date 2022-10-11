@@ -198,7 +198,7 @@ impl ECVRF {
     /// # Returns
     ///
     /// * If successful, an `EcPoint` representing the public key.
-    fn derive_public_key_point(&mut self, secret_key: &BigNum) -> Result<EcPoint, Error> {
+    pub fn derive_public_key_point(&mut self, secret_key: &BigNum) -> Result<EcPoint, Error> {
         let mut point = EcPoint::new(self.group.as_ref())?;
         // secret_key = point*generator
         point.mul_generator(&self.group, secret_key, &self.bn_ctx)?;

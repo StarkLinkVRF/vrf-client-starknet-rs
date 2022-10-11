@@ -1,15 +1,19 @@
 // Scheduler, and trait for .seconds(), .minutes(), etc.
 
+use openssl::bn::{BigNum, BigNumContext};
 // Import week days and WeekDay
 use starknet::accounts::SingleOwnerAccount;
 use starknet::core::chain_id;
 use starknet::core::types::{BlockId, FieldElement, TransactionStatus};
 use starknet::providers::{Provider, SequencerGatewayProvider};
 use starknet::signers::{LocalWallet, SigningKey};
+use tokio::io::AsyncReadExt;
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::Duration;
+use vrf::openssl::{CipherSuite, ECVRF};
+use starknet::core::crypto::pedersen_hash;
 
 mod client_lib;
 
@@ -23,7 +27,8 @@ struct AccountInstance {
 async fn fetch_new_requests(
     block_number: Option<u64>,
     provider: SequencerGatewayProvider,
-    oracle_address : String
+    oracle_address : String,
+    public_key_hash : FieldElement
 ) -> (Option<u64>, Option<Vec<FieldElement>>) {
     let latest_block_number = provider
         .get_block(BlockId::Latest)
@@ -54,7 +59,7 @@ async fn fetch_new_requests(
     for n in block_num + 1..=latest_block_number {
         println!("Querying provider for block number #{}", n);
         let mut request_indexes =
-            client_lib::get_rng_request_events(provider.clone(), oracle_address, n).await;
+            client_lib::get_rng_request_events(provider.clone(), oracle_address, n, public_key_hash).await;
 
         if request_indexes.len() == 0 {
             println!("Found no request for block number #{}", n);
@@ -225,13 +230,54 @@ async fn assemble_account_instances(network: String) -> Vec<AccountInstance> {
     return account_instances;
 }
 
+
+fn retrieve_public_key_hash(secret_key : String) -> FieldElement {
+    let mut vrf = ECVRF::from_suite(CipherSuite::SECP256K1_SHA256_TAI).unwrap();
+
+    let secret_key_bn = BigNum::from_slice(&hex::decode(&secret_key).unwrap()).unwrap();
+
+    let public_key_point = vrf.derive_public_key_point(&secret_key_bn).unwrap();
+
+    let mut x = BigNum::new().unwrap();
+    let mut y = BigNum::new().unwrap();
+
+    let mut ctx = BigNumContext::new().unwrap();
+
+    public_key_point
+        .affine_coordinates(&vrf.group, &mut x, &mut y, &mut ctx)
+        .unwrap();
+
+    
+    println!("x pub key {}", x);
+    println!("y pub key {}", y);
+
+    let (x1, x2, x3) = client_lib::split_bigint(x, vrf.bn_ctx);
+    let (y1, y2, y3) = client_lib::split_bigint(y, ctx);
+
+    let public_hash = pedersen_hash(
+    &FieldElement::from_hex_be(&x1.to_hex_str().unwrap().to_string()).unwrap(),
+    &FieldElement::from_hex_be(&x2.to_hex_str().unwrap().to_string()).unwrap());
+
+    let public_hash = pedersen_hash(&public_hash, &FieldElement::from_hex_be(&x3.to_hex_str().unwrap().to_string()).unwrap());
+    let public_hash = pedersen_hash(&public_hash, &FieldElement::from_hex_be(&y1.to_hex_str().unwrap().to_string()).unwrap());
+    let public_hash = pedersen_hash(&public_hash, &FieldElement::from_hex_be(&y2.to_hex_str().unwrap().to_string()).unwrap());
+    let public_hash = pedersen_hash(&public_hash, &FieldElement::from_hex_be(&y3.to_hex_str().unwrap().to_string()).unwrap());
+
+    println!("Public Key Hash is {}", public_hash);
+    return public_hash
+}
+
 #[tokio::main]
 async fn main() {
 
     let network = env::var("NETWORK").expect("No variable of key NETWORK specified");
 
     println!("network {}", network);
-    
+
+    let vrf_private_key = env::var("VRF_SECRET").expect("No env variable of key VRF_SECRET");
+
+    let public_key_hash = retrieve_public_key_hash(vrf_private_key);
+
     let provider = get_provider(network.clone()).await;
 
     let oracle_address:String = env::var("ORACLE_ADDRESS").expect("No variable of key ORACLE_ADDRESS specified");
@@ -247,7 +293,7 @@ async fn main() {
         loop {
             println!("looking at block {:?}", block_number);
             let (latest_block_number, new_requests) =
-                fetch_new_requests(block_number, provider.clone(), oracle_address.clone()).await;
+                fetch_new_requests(block_number, provider.clone(), oracle_address.clone(), public_key_hash.clone()).await;
 
             block_number = latest_block_number;
             match new_requests {
